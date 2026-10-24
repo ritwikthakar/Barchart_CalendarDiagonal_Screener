@@ -13,6 +13,11 @@ DEFAULT_DIR = os.environ.get("BARCHART_DIR", "./data")
 st.sidebar.header("Data")
 ups = st.sidebar.file_uploader("Barchart screener CSVs (all 6 at once)", type="csv", accept_multiple_files=True)
 sources = [(u, u.name) for u in ups]
+
+
+def _open(s):
+    import io
+    return io.BytesIO(s.getvalue()) if hasattr(s, "getvalue") else s
 if not sources and os.path.isdir(DEFAULT_DIR):
     paths = glob.glob(os.path.join(DEFAULT_DIR, "*.csv"))
     if paths:
@@ -24,14 +29,27 @@ if not sources:
     st.info("Upload the Barchart calendar and diagonal screener CSVs in the sidebar to begin.")
     st.stop()
 
+earn_src = [s for s in sources if sc.is_earnings_file(_open(s[0]))]
+sources = [s for s in sources if not sc.is_earnings_file(_open(s[0]))]
+file_events = sc.parse_earnings_file(_open(earn_src[0][0])) if earn_src else {}
+if not sources:
+    st.warning("Only an earnings file was found - add the Barchart calendar/diagonal CSVs."); st.stop()
+
 dates = [d for d in (sc.file_date(n) for _, n in sources) if d is not None]
 asof = st.sidebar.date_input("As-of date (DTE reference)", value=(max(dates) if dates else pd.Timestamp.today()).date())
 asof = pd.Timestamp(asof)
 
 st.sidebar.header("Earnings")
-ev_txt = st.sidebar.text_area("Upcoming earnings: SYMBOL YYYY-MM-DD AMC|BMO", sc.DEFAULT_EVENTS, height=170)
+if file_events:
+    st.sidebar.success(f"Earnings file: {len(file_events)} reports in the next 7 trading days ({earn_src[0][1][:40]})")
+else:
+    st.sidebar.caption("No earnings file found - using the built-in fallback list. Upload Barchart's "
+                       "'earnings in next 7 trading days' CSV for the full calendar.")
+ev_txt = st.sidebar.text_area("Manual overrides: SYMBOL YYYY-MM-DD AMC|BMO (win over the file)",
+                              "" if file_events else sc.DEFAULT_EVENTS, height=120,
+                              key="ev_file" if file_events else "ev_default")
 rec_txt = st.sidebar.text_area("Already reported (post-event): same format", sc.DEFAULT_RECENT, height=100)
-events = sc.parse_events(ev_txt)
+events = {**file_events, **sc.parse_events(ev_txt)}
 recent = set(sc.parse_events(rec_txt))
 
 
@@ -142,8 +160,11 @@ with tab_spcx:
     sort_by = f.selectbox("Sort by", ["EV_calm%", "EV_base%", "Skew"], key="so1")
     res = sc.spcx_style(df, min_skew, max_mny, max_ds, min_deb)
     res = res[~res.EventFront]
-    st.caption("Only earnings dates listed in the sidebar are excluded - check any name here for an unlisted report "
-               "inside the short leg (e.g. energy majors, ORCL, MU) before trading.")
+    if file_events:
+        st.caption("Names reporting within the next 7 trading days (per your earnings file) are excluded. "
+                   "A report later than that can still fall inside a 10/30+ short leg only if the file's window covers it.")
+    else:
+        st.caption("No earnings file loaded: only the fallback dates are excluded - check any name for an unlisted report.")
     if only_post:
         res = res[res.Reported]
     show(res, sort_by, key="spcx")

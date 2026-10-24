@@ -88,6 +88,25 @@ def parse_events(text, asof=None):
     return ev
 
 
+def is_earnings_file(src):
+    try:
+        return "Earnings Date" in [x.strip() for x in pd.read_csv(src, nrows=0).columns]
+    except Exception:
+        return False
+
+
+def parse_earnings_file(src):
+    """Barchart 'earnings in next 7 trading days' export -> {SYMBOL: (date, 'AMC'|'BMO')}.
+    The 'Released' column holds the timing; unknown ('--') is treated as BMO (earlier reaction = conservative)."""
+    d = pd.read_csv(src)
+    d.columns = [x.strip() for x in d.columns]
+    d = d[pd.to_datetime(d["Earnings Date"], errors="coerce").notna()]
+    out = {}
+    for sym, dt, t in zip(d["Symbol"].astype(str).str.strip().str.upper(), pd.to_datetime(d["Earnings Date"]), d["Released"].astype(str)):
+        out[sym] = (dt, "AMC" if "after" in t.lower() else "BMO")
+    return out
+
+
 def tag_events(df, events, recent):
     """EventFront: print lands before the short leg expires. EventBack: only the long leg holds it."""
     ef, eb, ed, rec = [], [], [], []
