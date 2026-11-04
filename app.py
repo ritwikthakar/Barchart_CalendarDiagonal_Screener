@@ -132,7 +132,7 @@ def trade_card(res, key):
     st.info("Close before the short leg's expiry day (~3:30pm ET) to avoid pin/assignment risk on a short ITM option.")
 
 
-tab_data, tab_spcx, tab_nflx, tab_earn = st.tabs(["Files", "SPCX-style: post-event IV-rich calendars", "NFLX-style: directional diagonals", "Earnings plays (separate)"])
+tab_data, tab_spcx, tab_nflx, tab_earn = st.tabs(["Files", "Calendar Spreads", "Diagonal Spreads", "Earnings plays (separate)"])
 
 # ------------------------------------------------------------------ files
 with tab_data:
@@ -148,7 +148,7 @@ with tab_data:
 
 # ------------------------------------------------------------------ SPCX-style
 with tab_spcx:
-    st.markdown("**Template:** the SPCX trade - short a near-expiry ATM leg priced far above the back month, after the event, "
+    st.markdown("**Template:** Short a near-expiry ATM leg priced far above the back month, after the event, "
                 "long the next monthly. Pre-earnings names are excluded here (see the earnings tab).")
     a, b, c, d = st.columns(4)
     min_skew = a.slider("Min front-vs-back IV gap (pts)", 2, 25, 8, key="sk")
@@ -171,7 +171,7 @@ with tab_spcx:
 
 # ------------------------------------------------------------------ NFLX-style
 with tab_nflx:
-    st.markdown("**Template:** the NFLX trade - price bouncing off a put wall / support; buy a later-dated call (or put) "
+    st.markdown("**Template:** Price bouncing off a put wall / support; buy a later-dated call (or put) "
                 "diagonal against a near-dated short beyond the level. Needs cheap long-leg vol and a modest debit.")
     a, b, c, d = st.columns(4)
     direction = a.radio("Direction", ["Bullish", "Bearish"], horizontal=True, key="dir")
