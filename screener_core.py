@@ -247,4 +247,4 @@ def nflx_style(df, direction="Bullish", max_ivr=40, max_ivhv=1.05, min_abs_delta
         ((df.DTE_L - df.DTE_S) >= min_gap) & (df.DTE_L >= min_dte_l)
     if level:
         m &= ((df.KS / level - 1).abs() * 100 <= level_tol)
-    return df[m]
+    return df[m]

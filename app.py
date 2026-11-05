@@ -181,7 +181,7 @@ def credit_card(res, key):
             "last day (~3:30pm ET). The long wing expires later, so the position is not defined-risk once the short expires.")
 
 
-tab_data, tab_spcx, tab_nflx, tab_credit, tab_earn = st.tabs(["Files", "SPCX-style: post-event IV-rich calendars", "NFLX-style: directional diagonals", "Credit diagonals", "Earnings plays (separate)"])
+tab_data, tab_spcx, tab_nflx, tab_credit, tab_earn = st.tabs(["Files", "Calendar Spreads", "Diagonal Spreads", "Credit Diagonals", "Earnings plays (separate)"])
 
 # ------------------------------------------------------------------ files
 with tab_data:
@@ -192,12 +192,12 @@ with tab_data:
         if n == 5000:
             st.warning(f"{f}: exactly 5,000 rows - Barchart likely truncated the export, so some symbols may be missing.")
     st.caption("Barchart quirks handled: the short-put diagonal file's 'Net Credit' is really a debit (bear debit diagonal); "
-               "long-put diagonal and short-call diagonal are credit structures (kept for reference, not screened).")
+               "long-put diagonal and short-call diagonal are credit structures (screened on the Credit Diagonals tab).")
     st.dataframe(df.groupby(["Kind", "CP", "Struct"]).size().rename("rows").reset_index(), hide_index=True)
 
 # ------------------------------------------------------------------ SPCX-style
 with tab_spcx:
-    st.markdown("**Template:** the SPCX trade - short a near-expiry ATM leg priced far above the back month, after the event, "
+    st.markdown("**Template:** Short a near-expiry ATM leg priced far above the back month, after the event, "
                 "long the next monthly. Pre-earnings names are excluded here (see the earnings tab).")
     a, b, c, d = st.columns(4)
     min_skew = a.slider("Min front-vs-back IV gap (pts)", 2, 25, 8, key="sk")
@@ -220,7 +220,7 @@ with tab_spcx:
 
 # ------------------------------------------------------------------ NFLX-style
 with tab_nflx:
-    st.markdown("**Template:** the NFLX trade - price bouncing off a put wall / support; buy a later-dated call (or put) "
+    st.markdown("**Template:** Price bouncing off a put wall / support; buy a later-dated call (or put) "
                 "diagonal against a near-dated short beyond the level. Needs cheap long-leg vol and a modest debit.")
     a, b, c, d = st.columns(4)
     direction = a.radio("Direction", ["Bullish", "Bearish"], horizontal=True, key="dir")
@@ -243,7 +243,6 @@ with tab_nflx:
     sort2 = st.selectbox("Sort by", ["EV_base%", "EV_calm%", "Skew"], key="so2")
     st.caption("EV here includes the drift you set (a bounce thesis); set it to 0 to see the no-view value.")
     show(res, sort2, drift=drift, key="nflx")
-
 
 # ------------------------------------------------------------------ credit diagonals
 with tab_credit:
@@ -280,4 +279,4 @@ with tab_earn:
     mdl = b.number_input("Min debit ($/share)", 0.0, 100.0, 0.5, key="e2")
     srt = c.selectbox("Sort by", ["EV_calm%", "EV_base%", "Skew"], key="so3")
     res = df[(df.EventFront) & (df.Struct == "debit") & (df.Kind == "Calendar") & (df.Mny.abs() <= mn) & (df.Net >= mdl)]
-    show(res, srt, key="earn")
+    show(res, srt, key="earn")
