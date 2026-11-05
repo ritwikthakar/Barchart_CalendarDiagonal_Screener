@@ -177,6 +177,58 @@ def payoff_curve(r, mult=1.0, points=61, span=0.18):
     return pd.DataFrame({"Price": S, "P/L per share": pl}).set_index("Price")
 
 
+# ------------------------------------------------------------------ credit diagonals
+def _pl_array(r, mult, scale, drift, z):
+    ST, back_iv = _terminal(r, mult, scale, drift, z)
+    long_v = bs(ST, r.KL, (r.DTE_L - r.DTE_S) / 365, back_iv, r.CP) * EXIT_HAIRCUT
+    return long_v - _intrinsic(ST, r.KS, r.CP) - r.Net      # Net<0 for credits, so -Net = credit received
+
+
+def otm_pct(df):
+    """How far the SHORT strike sits out of the money (positive = OTM)."""
+    return np.where(df.CP == "P", (df.Px - df.KS) / df.Px * 100, (df.KS - df.Px) / df.Px * 100)
+
+
+def prob_otm(r):
+    """Risk-neutral chance the short strike finishes OTM at its expiry (short-leg IV)."""
+    T = max(r.DTE_S, 0.5) / 365; v = r.IVS / 100
+    d2 = (np.log(r.Px / r.KS) + (R - .5 * v * v) * T) / (v * np.sqrt(T))
+    return float(norm.cdf(d2) if r.CP == "P" else norm.cdf(-d2)) * 100
+
+
+def credit_style(df, direction="Bullish", min_credit=0.20, min_ivr=30, min_ivhv=0.9, min_gap=0.0,
+                 max_dte_s=21, min_otm=0.0, max_otm=15.0, need_wing=True):
+    """Credit diagonal: SELL the near-dated leg, BUY a further-dated, further-OTM wing, collect a net credit.
+    Bullish = put credit diagonal (long-put-diagonal file); Bearish = call credit diagonal (short-call-diagonal file)."""
+    cp = "P" if direction == "Bullish" else "C"
+    otm = otm_pct(df)
+    wing = (df.KL < df.KS) if cp == "P" else (df.KL > df.KS)      # long strike further OTM than the short
+    m = (df.Struct == "credit") & (df.Kind == "Diagonal") & (df.CP == cp) & (-df.Net >= min_credit) & \
+        (df.IVR >= min_ivr) & (df.IVHV >= min_ivhv) & (df.Skew >= min_gap) & (df.DTE_S <= max_dte_s) & \
+        (otm >= min_otm) & (otm <= max_otm)
+    if need_wing:
+        m &= wing
+    return df[m]
+
+
+def add_ev_credit(df, calm_mult=0.85, calm_scale=0.7, drift_pct=0.0, n=4000, seed=7):
+    """EV expressed as % of modelled max loss at the short expiry (flat IV, +/-30% price grid)."""
+    z = np.random.default_rng(seed).standard_normal(n)
+    drift = np.log1p(drift_pct / 100)
+    rows = []
+    for r in df.itertuples():
+        credit = -r.Net
+        S = np.linspace(r.Px * 0.7, r.Px * 1.3, 121)
+        grid = bs(S, r.KL, (r.DTE_L - r.DTE_S) / 365, r.IVL / 100, r.CP) * EXIT_HAIRCUT - _intrinsic(S, r.KS, r.CP) - r.Net
+        risk = max(-grid.min(), 0.25 * credit)                 # floor so a no-loss grid can't give silly ratios
+        b = _pl_array(r, 1.0, 1.0, drift, z); k = _pl_array(r, calm_mult, calm_scale, drift, z)
+        rows.append(dict(Credit=credit, Width=abs(r.KL - r.KS), MaxLoss=risk, **{
+            "ROC%": credit / risk * 100, "OTM%": float(otm_pct(df.loc[[r.Index]])[0]), "ProbOTM%": prob_otm(r),
+            "EV_base%": b.mean() / risk * 100, "PoP_base%": (b > 0).mean() * 100,
+            "EV_calm%": k.mean() / risk * 100, "PoP_calm%": (k > 0).mean() * 100}))
+    return pd.concat([df.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
+
+
 # ------------------------------------------------------------------ the two discovered plays
 def spcx_style(df, min_skew=8, max_abs_mny=3.0, max_dte_s=7, min_debit=0.30, kinds=("Calendar",)):
     """Post-event IV-rich calendar: short front leg priced far above the back, near ATM, expiring soon."""

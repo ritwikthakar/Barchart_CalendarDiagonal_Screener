@@ -132,7 +132,56 @@ def trade_card(res, key):
     st.info("Close before the short leg's expiry day (~3:30pm ET) to avoid pin/assignment risk on a short ITM option.")
 
 
-tab_data, tab_spcx, tab_nflx, tab_earn = st.tabs(["Files", "Calendar Spreads", "Diagonal Spreads", "Earnings plays (separate)"])
+
+CRCOLS = ["Symbol", "CP", "Px", "KS", "KL", "ExpS", "ExpL", "DTE_S", "Credit", "Width", "MaxLoss", "ROC%", "OTM%", "ProbOTM%",
+          "IVS", "IVL", "Skew", "IVR", "IVHV", "Delta", "EV_base%", "PoP_base%", "EV_calm%", "PoP_calm%"]
+CRFMT = dict(FMT)
+CRFMT.update({c: st.column_config.NumberColumn(c, format="%.1f") for c in ["ROC%", "OTM%", "ProbOTM%", "Width"]})
+CRFMT.update({"Credit": st.column_config.NumberColumn(format="%.2f"), "MaxLoss": st.column_config.NumberColumn("Max loss*", format="%.2f"),
+              "EV_base%": st.column_config.NumberColumn("EV_base% of risk", format="%.1f"),
+              "EV_calm%": st.column_config.NumberColumn("EV_calm% of risk", format="%.1f")})
+
+
+def show_credit(res, sort_by, drift=0.0, key="cr", max_ev=400):
+    if res.empty:
+        st.warning("No rows pass these filters - loosen a threshold."); return
+    res = res.sort_values("Skew", ascending=False).head(max_ev)
+    res = sc.add_ev_credit(res, calm_mult, calm_scale, drift)
+    res = res.sort_values(sort_by, ascending=False).reset_index(drop=True)
+    tag = res.EventFront.map({True: "event in front", False: ""}) + res.Reported.map({True: " reported", False: ""})
+    view = res.assign(Note=tag)[CRCOLS + ["Note"]]
+    st.caption(f"{len(res)} candidates, sorted by {sort_by}. *Max loss = worst P/L at the short expiry on a flat-IV grid (+/-30%), "
+               "floored at 25% of the credit; EV is shown as a % of that risk.")
+    st.dataframe(view, column_config=CRFMT, use_container_width=True, hide_index=True, height=420)
+    st.download_button("Download CSV", view.to_csv(index=False), f"{key}_candidates.csv", key=f"dl_{key}")
+    credit_card(res, key)
+
+
+def credit_card(res, key):
+    st.subheader("Trade card")
+    labels = [f"{r.Symbol} {r.CP} short {r.KS:g} {r.ExpS:%m/%d} / long {r.KL:g} {r.ExpL:%m/%d} @ {r.Credit:.2f} cr" for r in res.itertuples()]
+    i = st.selectbox("Pick a candidate", range(len(res)), format_func=lambda j: labels[j], key=f"pick_{key}")
+    r = res.iloc[i]
+    n = st.number_input("Contracts", 1, 100, 1, key=f"n_{key}")
+    tp = st.number_input("Take profit (% of credit kept)", 10.0, 100.0, 50.0, 5.0, key=f"tp_{key}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Credit received", f"${r.Credit * 100 * n:,.0f}")
+    c2.metric("Max loss (model)", f"${r.MaxLoss * 100 * n:,.0f}")
+    c3.metric("GTC buy-to-close (net)", f"{r.Credit * (1 - tp / 100):.2f}")
+    c4.metric("Profit at target", f"${r.Credit * tp / 100 * 100 * n:,.0f}")
+    pc = sc.payoff_curve(r)
+    st.line_chart(pc, height=240)
+    st.caption(f"Short strike {r.KS:g} is {r['OTM%']:.1f}% OTM; model chance it finishes OTM {r['ProbOTM%']:.0f}% (short-leg IV). "
+               "Payoff is at the short expiry with flat IV and no event.")
+    if r.EventFront:
+        st.warning(f"Earnings {r.EventDate:%m/%d} lands inside the short leg - the payoff chart ignores the event jump.")
+    if r.CP == "C":
+        st.warning("Short call: check the ex-dividend date - ITM calls can be assigned early the day before.")
+    st.info("A short option near the money carries assignment and pin risk into expiry. Close or roll before the short leg's "
+            "last day (~3:30pm ET). The long wing expires later, so the position is not defined-risk once the short expires.")
+
+
+tab_data, tab_spcx, tab_nflx, tab_credit, tab_earn = st.tabs(["Files", "SPCX-style: post-event IV-rich calendars", "NFLX-style: directional diagonals", "Credit diagonals", "Earnings plays (separate)"])
 
 # ------------------------------------------------------------------ files
 with tab_data:
@@ -148,7 +197,7 @@ with tab_data:
 
 # ------------------------------------------------------------------ SPCX-style
 with tab_spcx:
-    st.markdown("**Template:** Short a near-expiry ATM leg priced far above the back month, after the event, "
+    st.markdown("**Template:** the SPCX trade - short a near-expiry ATM leg priced far above the back month, after the event, "
                 "long the next monthly. Pre-earnings names are excluded here (see the earnings tab).")
     a, b, c, d = st.columns(4)
     min_skew = a.slider("Min front-vs-back IV gap (pts)", 2, 25, 8, key="sk")
@@ -171,7 +220,7 @@ with tab_spcx:
 
 # ------------------------------------------------------------------ NFLX-style
 with tab_nflx:
-    st.markdown("**Template:** Price bouncing off a put wall / support; buy a later-dated call (or put) "
+    st.markdown("**Template:** the NFLX trade - price bouncing off a put wall / support; buy a later-dated call (or put) "
                 "diagonal against a near-dated short beyond the level. Needs cheap long-leg vol and a modest debit.")
     a, b, c, d = st.columns(4)
     direction = a.radio("Direction", ["Bullish", "Bearish"], horizontal=True, key="dir")
@@ -194,6 +243,31 @@ with tab_nflx:
     sort2 = st.selectbox("Sort by", ["EV_base%", "EV_calm%", "Skew"], key="so2")
     st.caption("EV here includes the drift you set (a bounce thesis); set it to 0 to see the no-view value.")
     show(res, sort2, drift=drift, key="nflx")
+
+
+# ------------------------------------------------------------------ credit diagonals
+with tab_credit:
+    st.markdown("**Credit diagonals:** sell the near-dated leg, buy a further-dated, further-OTM wing, and collect a net credit. "
+                "Bullish = put credit diagonal; bearish = call credit diagonal. Best when the short leg's IV is rich "
+                "(IV rank high, IV/HV above 1) and no earnings fall inside it.")
+    a, b, c, d = st.columns(4)
+    cdir = a.radio("Direction", ["Bullish", "Bearish"], horizontal=True, key="cdir")
+    cmin_cr = b.number_input("Min credit ($/share)", 0.0, 50.0, 0.30, 0.05, key="ccr")
+    cmin_ivr = c.slider("Min IV rank", 0, 100, 40, key="civr")
+    cmin_ivhv = d.slider("Min IV/HV", 0.5, 2.5, 0.95, 0.05, key="civhv")
+    e, f, g, h = st.columns(4)
+    cmax_ds = e.slider("Max short DTE", 3, 45, 14, key="cds")
+    cotm = f.slider("Short strike OTM (%)", 0.0, 20.0, (1.0, 8.0), 0.5, key="cotm")
+    cgap = g.slider("Min short-minus-long IV (pts)", -5.0, 25.0, 0.0, 0.5, key="cgap")
+    cdrift = h.slider("Expected drift to short expiry (%)", -10.0, 10.0, 0.0, 0.5, key="cdr")
+    i1, i2, i3 = st.columns(3)
+    wing = i1.checkbox("Long strike further OTM than short (wing)", True, key="cwing")
+    inc_ev = i2.checkbox("Include names with earnings inside the short leg", False, key="cev")
+    csort = i3.selectbox("Sort by", ["EV_base%", "EV_calm%", "ROC%", "ProbOTM%"], key="csort")
+    res = sc.credit_style(df, cdir, cmin_cr, cmin_ivr, cmin_ivhv, cgap, cmax_ds, cotm[0], cotm[1], wing)
+    if not inc_ev:
+        res = res[~res.EventFront]
+    show_credit(res, csort, drift=cdrift, key="credit")
 
 # ------------------------------------------------------------------ earnings
 with tab_earn:
