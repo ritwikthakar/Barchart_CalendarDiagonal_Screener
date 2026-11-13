@@ -94,6 +94,10 @@ FMT.update({"Net": st.column_config.NumberColumn("Debit", format="%.2f"), "Px": 
             "ExpS": st.column_config.DateColumn("Short exp"), "ExpL": st.column_config.DateColumn("Long exp"),
             "DTE_S": "Short DTE"})
 
+# Results tables shown on each tab, collected for the Assistant tab (filled as the tabs run)
+VIEWS = {}
+VIEW_NAMES = {"spcx": "Calendar Spreads", "nflx": "Diagonal Spreads", "earn": "Earnings plays"}
+
 
 def show(res, sort_by, drift=0.0, key="t", max_ev=400):
     """Run the EV model on the shortlist, show the table and a trade card."""
@@ -104,6 +108,7 @@ def show(res, sort_by, drift=0.0, key="t", max_ev=400):
     res = res.sort_values(sort_by, ascending=False).reset_index(drop=True)
     tag = res.EventFront.map({True: "event in front", False: ""}) + res.Reported.map({True: " reported", False: ""})
     view = res.assign(Note=tag)[COLS + EVC + ["Note"]]
+    VIEWS[VIEW_NAMES.get(key, key)] = view
     st.caption(f"{len(res)} candidates, sorted by {sort_by}")
     st.dataframe(view, column_config=FMT, use_container_width=True, hide_index=True, height=420)
     st.download_button("Download CSV", view.to_csv(index=False), f"{key}_candidates.csv", key=f"dl_{key}")
@@ -150,6 +155,7 @@ def show_credit(res, sort_by, drift=0.0, key="cr", max_ev=400):
     res = res.sort_values(sort_by, ascending=False).reset_index(drop=True)
     tag = res.EventFront.map({True: "event in front", False: ""}) + res.Reported.map({True: " reported", False: ""})
     view = res.assign(Note=tag)[CRCOLS + ["Note"]]
+    VIEWS["Credit Diagonals"] = view
     st.caption(f"{len(res)} candidates, sorted by {sort_by}. *Max loss = worst P/L at the short expiry on a flat-IV grid (+/-30%), "
                "floored at 25% of the credit; EV is shown as a % of that risk.")
     st.dataframe(view, column_config=CRFMT, use_container_width=True, hide_index=True, height=420)
@@ -181,7 +187,8 @@ def credit_card(res, key):
             "last day (~3:30pm ET). The long wing expires later, so the position is not defined-risk once the short expires.")
 
 
-tab_data, tab_spcx, tab_nflx, tab_credit, tab_earn = st.tabs(["Files", "Calendar Spreads", "Diagonal Spreads", "Credit Diagonals", "Earnings plays (separate)"])
+tab_data, tab_spcx, tab_nflx, tab_credit, tab_earn, tab_chat = st.tabs(
+    ["Files", "Calendar Spreads", "Diagonal Spreads", "Credit Diagonals", "Earnings plays (separate)", "Assistant"])
 
 # ------------------------------------------------------------------ files
 with tab_data:
@@ -279,4 +286,18 @@ with tab_earn:
     mdl = b.number_input("Min debit ($/share)", 0.0, 100.0, 0.5, key="e2")
     srt = c.selectbox("Sort by", ["EV_calm%", "EV_base%", "Skew"], key="so3")
     res = df[(df.EventFront) & (df.Struct == "debit") & (df.Kind == "Calendar") & (df.Mny.abs() <= mn) & (df.Net >= mdl)]
-    show(res, srt, key="earn")
+    show(res, srt, key="earn")
+
+# ------------------------------------------------------------------ assistant
+with tab_chat:
+    from chatbot import render_chatbot
+    if not VIEWS:
+        st.info("Open one of the screener tabs first so there is a results table to discuss.")
+    else:
+        which = st.selectbox("Discuss results from", list(VIEWS), key="chat_which")
+        ev_ctx = {str(k): str(v) for k, v in list(events.items())[:40]}
+        ctx = (f"Table: {which}. As-of date {asof.date()}. Columns: Debit/Credit are $ per share; Skew = short-leg IV minus "
+               "long-leg IV in points; EV_calm%/EV_base% are model expected value as % of debit (or of risk for credit "
+               "diagonals); PoP = model probability of profit; Note flags earnings inside the short leg or already reported. "
+               f"Upcoming earnings (symbol: value): {ev_ctx}")
+        render_chatbot(VIEWS[which], extra_context=ctx, key=f"chat_{which}")
